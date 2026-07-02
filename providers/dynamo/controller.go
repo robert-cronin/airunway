@@ -20,6 +20,7 @@ import (
 	"context"
 	stderrors "errors"
 	"fmt"
+	"strings"
 	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
@@ -198,6 +199,43 @@ func (r *DynamoProviderReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		return ctrl.Result{}, r.Status().Update(ctx, &md)
 	}
 
+	// --- Phase 3.5: Upstream schema compatibility gate (issue #308) ---
+	// Before touching the cluster, confirm the installed upstream CRD understands
+	// the fields this ModelDeployment renders. This prevents a fresh deployment
+	// from silently losing fields (reporting Running while inference is broken)
+	// and prevents an older shim from re-applying a stripped spec in a tight loop.
+	if verdict, detail := r.checkUpstreamCompatibility(ctx, resources); verdict == compatIncompatible {
+		logger.Info("Upstream CRD incompatible with rendered ModelDeployment; not applying",
+			"name", md.Name, "detail", detail)
+		r.setCondition(&md, airunwayv1alpha1.ConditionTypeProviderCompatible, metav1.ConditionFalse, "IncompatibleUpstream", detail)
+		plan := planUpstreamIncompatibility(r.upstreamResourceExists(ctx, resources), detail)
+		if plan.preserveExisting {
+			// Runtime drift: preserve the existing workload untouched (no re-apply,
+			// no delete) and sync its real status, including its real phase. We do
+			// not clamp the phase: a genuinely crashed frozen workload should surface
+			// Failed rather than a stale Running. This is safe because gateway
+			// reconciliation is gated on phase==Running (see the core
+			// modeldeployment_controller), so a Failed phase triggers no teardown.
+			// The authoritative "frozen and not serviceable" signals are
+			// ProviderCompatible=False, Ready=False (kept False by the syncStatus gate
+			// for every phase), and this message.
+			md.Status.Provider.ResourceName = md.Name
+			md.Status.Provider.ResourceKind = DynamoGraphDeploymentKind
+			if len(resources) > 0 {
+				if serr := r.syncStatus(ctx, &md, resources[0]); serr != nil {
+					logger.Error(serr, "Failed to sync status while frozen", "name", md.Name)
+				}
+			}
+			md.Status.Message = plan.message
+			return ctrl.Result{RequeueAfter: RequeueInterval}, r.Status().Update(ctx, &md)
+		}
+		// Fresh create: refuse-fast so no unservable workload is ever created.
+		r.setCondition(&md, airunwayv1alpha1.ConditionTypeReady, metav1.ConditionFalse, "IncompatibleUpstream", detail)
+		md.Status.Phase = plan.phase
+		md.Status.Message = plan.message
+		return ctrl.Result{RequeueAfter: RequeueInterval}, r.Status().Update(ctx, &md)
+	}
+
 	// Create or update the DynamoGraphDeployment
 	for _, resource := range resources {
 		if err := r.createOrUpdateResource(ctx, resource, &md); err != nil {
@@ -297,6 +335,123 @@ func (r *DynamoProviderReconciler) validateCompatibility(md *airunwayv1alpha1.Mo
 	}
 
 	return nil
+}
+
+// compatVerdict is the result of checking whether the installed upstream CRD
+// understands what a ModelDeployment renders.
+type compatVerdict int
+
+const (
+	// compatUnknown means compatibility could not be determined (a transient or
+	// environmental error). The controller must not gate on this verdict.
+	compatUnknown compatVerdict = iota
+	// compatCompatible means the upstream accepted every field the shim renders.
+	compatCompatible
+	// compatIncompatible means the upstream would reject or silently prune fields
+	// the shim renders (e.g. an older CRD that does not define frontendSidecar).
+	compatIncompatible
+)
+
+// checkUpstreamCompatibility dry-run applies the rendered upstream resource with
+// strict field validation. Server-side apply evaluates the whole object against
+// the installed CRD schema, so a field the CRD does not define surfaces as a
+// rejection here instead of being silently pruned on a real write (issue #308).
+// The check is per-ModelDeployment by construction: it validates exactly the
+// fields this deployment renders, with no parallel hand-maintained field list.
+func (r *DynamoProviderReconciler) checkUpstreamCompatibility(ctx context.Context, resources []*unstructured.Unstructured) (compatVerdict, string) {
+	for _, res := range resources {
+		if res.GetKind() != DynamoGraphDeploymentKind {
+			continue
+		}
+		attempt := res.DeepCopy()
+		err := r.Patch(ctx, attempt, client.Apply,
+			client.FieldOwner(FieldManager),
+			client.ForceOwnership,
+			client.DryRunAll,
+			client.FieldValidation(metav1.FieldValidationStrict),
+		)
+		if verdict, detail := classifyCompatErr(err); verdict != compatCompatible {
+			return verdict, detail
+		}
+	}
+	return compatCompatible, ""
+}
+
+// classifyCompatErr maps a dry-run apply error to a compatibility verdict. A
+// deterministic schema rejection (unknown/undeclared field, bad request or
+// invalid) means the upstream is incompatible. Anything else — the CRD kind not
+// being installed, RBAC, conflicts, timeouts — is inconclusive and must not gate
+// the deployment.
+func classifyCompatErr(err error) (compatVerdict, string) {
+	if err == nil {
+		return compatCompatible, ""
+	}
+	msg := err.Error()
+	if errors.IsBadRequest(err) || errors.IsInvalid(err) ||
+		strings.Contains(msg, "unknown field") ||
+		strings.Contains(msg, "field not declared in schema") {
+		return compatIncompatible, msg
+	}
+	return compatUnknown, msg
+}
+
+// upstreamResourceExists reports whether the rendered upstream workload already
+// exists in the cluster. It distinguishes a fresh create (refuse-fast) from a
+// workload that predates a version change (freeze/preserve).
+func (r *DynamoProviderReconciler) upstreamResourceExists(ctx context.Context, resources []*unstructured.Unstructured) bool {
+	for _, res := range resources {
+		if res.GetKind() != DynamoGraphDeploymentKind {
+			continue
+		}
+		existing := &unstructured.Unstructured{}
+		existing.SetGroupVersionKind(res.GroupVersionKind())
+		if err := r.Get(ctx, types.NamespacedName{Name: res.GetName(), Namespace: res.GetNamespace()}, existing); err == nil {
+			return true
+		}
+	}
+	return false
+}
+
+// incompatibilityPlan describes how the controller reacts to an incompatible
+// upstream, keeping the decision separate from status I/O so it is unit-testable.
+type incompatibilityPlan struct {
+	// preserveExisting is true when a workload already exists: freeze it in place
+	// (do not re-apply, do not delete) to avoid a rewrite storm and to leave any
+	// still-working inference running until a human reconciles versions.
+	preserveExisting bool
+	// phase is the phase to set when refusing a fresh create (refuse-fast only;
+	// unused when preserveExisting is true, where the realized phase comes from
+	// syncStatus). It is intentionally not Failed: an incompatible upstream is
+	// recoverable by upgrading the CRD without touching the ModelDeployment, so the
+	// deployment stays Pending and self-heals on a later reconcile.
+	phase airunwayv1alpha1.DeploymentPhase
+	// message is the human-readable status message to surface.
+	message string
+}
+
+// planUpstreamIncompatibility decides between refuse-fast (fresh create) and
+// freeze (runtime drift) when the upstream is incompatible.
+func planUpstreamIncompatibility(alreadyExists bool, detail string) incompatibilityPlan {
+	if alreadyExists {
+		return incompatibilityPlan{
+			preserveExisting: true,
+			message:          "Provider is no longer compatible with the running workload after a version change; preserving it unchanged. " + detail,
+		}
+	}
+	return incompatibilityPlan{
+		preserveExisting: false,
+		phase:            airunwayv1alpha1.DeploymentPhasePending,
+		message:          "Refusing to deploy: the installed Dynamo CRD does not support this configuration. " + detail,
+	}
+}
+
+// providerKnownCompatible reports whether the ProviderCompatible condition is not
+// explicitly False. An absent or Unknown condition is treated as compatible so
+// the readiness gate never regresses behavior when the upstream check could not
+// run.
+func providerKnownCompatible(md *airunwayv1alpha1.ModelDeployment) bool {
+	c := meta.FindStatusCondition(md.Status.Conditions, airunwayv1alpha1.ConditionTypeProviderCompatible)
+	return c == nil || c.Status != metav1.ConditionFalse
 }
 
 // resourceConflictError is returned when a resource exists but is not managed by this ModelDeployment
@@ -446,9 +601,15 @@ func (r *DynamoProviderReconciler) syncStatus(ctx context.Context, md *airunwayv
 	md.Status.Replicas = statusResult.Replicas
 	md.Status.Endpoint = statusResult.Endpoint
 
-	// Update Ready condition based on phase
+	// Update Ready condition based on phase, gated on upstream compatibility.
+	// Issue #308: a live workload is only Ready if the provider is known to be
+	// compatible with the installed upstream, not merely because pods are up.
 	if statusResult.Phase == airunwayv1alpha1.DeploymentPhaseRunning {
-		r.setCondition(md, airunwayv1alpha1.ConditionTypeReady, metav1.ConditionTrue, "DeploymentReady", "All replicas are ready")
+		if providerKnownCompatible(md) {
+			r.setCondition(md, airunwayv1alpha1.ConditionTypeReady, metav1.ConditionTrue, "DeploymentReady", "All replicas are ready")
+		} else {
+			r.setCondition(md, airunwayv1alpha1.ConditionTypeReady, metav1.ConditionFalse, "IncompatibleUpstream", "Workload is running but the provider is not known-compatible with the installed upstream")
+		}
 	} else if statusResult.Phase == airunwayv1alpha1.DeploymentPhaseFailed {
 		r.setCondition(md, airunwayv1alpha1.ConditionTypeReady, metav1.ConditionFalse, "DeploymentFailed", statusResult.Message)
 	} else {
