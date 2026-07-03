@@ -76,7 +76,16 @@ The following features are explicitly out of scope for the initial release:
 
 ### Schema Compatibility
 
-Dynamic CRD version detection only detects API version changes (e.g., `v1alpha1` → `v1beta1`), not schema changes within a version. If a provider makes breaking schema changes without bumping the API version, errors surface at runtime via provider status.
+Dynamic CRD version detection only detects API version changes (e.g., `v1alpha1` → `v1beta1`), not schema changes *within* a version. An older upstream CRD can therefore silently prune fields a newer shim emits (e.g. Dynamo's `frontendSidecar`), which historically produced two failures: a deployment that reports `Running` while inference is actually broken (the pruned field never took effect), and a conflict storm when an older shim repeatedly re-applies a spec the API server keeps stripping.
+
+Shims now detect this and refuse to run blind (issue #308, dynamo first). Before applying, the shim performs a **server-side apply dry-run with strict field validation** of the rendered upstream resource: because apply is always strict, the API server reports any field the installed CRD would prune, so the check is per-deployment and needs no hand-maintained field list. On a detected incompatibility the shim sets `ProviderCompatible=False` and:
+
+- **Refuse-fast at create** — a not-yet-created workload is never applied; the `ModelDeployment` stays `Pending` (recoverable — it self-heals once the CRD is upgraded), never `Failed`.
+- **Freeze on runtime drift** — an already-running workload is preserved as-is (never re-applied or deleted), avoiding the conflict storm and leaving any still-working inference untouched until an admin reconciles versions.
+
+`Ready` is gated on compatibility: a workload whose upstream reports `Running` is only `Ready` when `ProviderCompatible` is not `False`, so an incompatible deployment can never masquerade as healthy. This reuses the existing `ProviderCompatible` condition — no new phase is introduced.
+
+Residual limitation: the dry-run signal only appears when the upstream CRD prunes unknown fields. A CRD that sets `x-kubernetes-preserve-unknown-fields: true` accepts the manifest silently, so version-window and runtime-status checks remain the fallback there.
 
 ### Controller RBAC Acts as Privileged Intermediary
 
