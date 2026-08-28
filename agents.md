@@ -156,7 +156,7 @@ Read these files **only when relevant** to your task:
 
 | File | When to read |
 |------|--------------|
-| [controller/AGENTS.md](controller/AGENTS.md) | Kubebuilder conventions, scaffolding rules |
+| [controller/AGENTS.md](controller/AGENTS.md) | Controller architecture, ownership, lifecycle, security, and validation |
 | [docs/architecture.md](docs/architecture.md) | System overview and component diagram |
 | [docs/controller-architecture.md](docs/controller-architecture.md) | Controller internals, reconciliation, webhooks, RBAC |
 | [docs/providers.md](docs/providers.md) | Provider selection and capabilities |
