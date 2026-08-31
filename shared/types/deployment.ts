@@ -163,7 +163,13 @@ export interface SecretSpec {
 export interface GatewaySpec {
   enabled?: boolean;
   modelName?: string;
+  gatewayRef?: GatewayReference;
   httpRouteRef?: string;
+}
+
+export interface GatewayReference {
+  name: string;
+  namespace?: string;
 }
 
 export interface ModelDeploymentSpec {

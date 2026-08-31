@@ -31,6 +31,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
+	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	airunwayv1alpha1 "github.com/ai-runway/airunway/controller/api/v1alpha1"
 	"github.com/ai-runway/airunway/controller/internal/validation"
@@ -284,6 +285,10 @@ func (v *ModelDeploymentCustomValidator) validateSpec(ctx context.Context, obj *
 		))
 	}
 
+	gatewayWarnings, gatewayErrs := v.validateGatewayReference(ctx, obj, specPath)
+	warnings = append(warnings, gatewayWarnings...)
+	allErrs = append(allErrs, gatewayErrs...)
+
 	// Validate model.id is required for huggingface source
 	if spec.Model.Source == airunwayv1alpha1.ModelSourceHuggingFace || spec.Model.Source == "" {
 		if spec.Model.ID == "" {
@@ -441,6 +446,83 @@ func (v *ModelDeploymentCustomValidator) validateSpec(ctx context.Context, obj *
 	allErrs = append(allErrs, validateResourceCeilings(spec, specPath)...)
 
 	return warnings, allErrs
+}
+
+// validateGatewayReference confirms an explicitly selected Gateway exists.
+// The cached reader handles steady-state admission without an API-server round
+// trip; an uncached fallback avoids rejecting a reference created before the
+// informer observes it.
+func (v *ModelDeploymentCustomValidator) validateGatewayReference(
+	ctx context.Context,
+	obj *airunwayv1alpha1.ModelDeployment,
+	specPath *field.Path,
+) (admission.Warnings, field.ErrorList) {
+	if obj.Spec.Gateway == nil || obj.Spec.Gateway.GatewayRef == nil {
+		return nil, nil
+	}
+
+	ref := obj.Spec.Gateway.GatewayRef
+	refPath := specPath.Child("gateway", "gatewayRef")
+	if ref.Name == "" {
+		return nil, field.ErrorList{field.Required(refPath.Child("name"), "gatewayRef.name is required")}
+	}
+
+	namespace := ref.Namespace
+	if namespace == "" {
+		namespace = obj.Namespace
+	}
+	if namespace == "" {
+		return nil, field.ErrorList{field.Required(
+			refPath.Child("namespace"),
+			"namespace is required when the ModelDeployment namespace is empty",
+		)}
+	}
+
+	if v.Reader == nil {
+		return nil, field.ErrorList{field.InternalError(
+			refPath,
+			fmt.Errorf("cannot verify referenced Gateway %s/%s: webhook reader is not configured", namespace, ref.Name),
+		)}
+	}
+
+	key := client.ObjectKey{Name: ref.Name, Namespace: namespace}
+	var gw gatewayv1.Gateway
+	err := v.Reader.Get(ctx, key, &gw)
+	if apierrors.IsNotFound(err) && v.APIReader != nil {
+		err = v.APIReader.Get(ctx, key, &gw)
+	}
+
+	switch {
+	case apierrors.IsNotFound(err):
+		return nil, field.ErrorList{field.Invalid(
+			refPath,
+			ref,
+			fmt.Sprintf("referenced Gateway %s/%s not found", namespace, ref.Name),
+		)}
+	case meta.IsNoMatchError(err):
+		return nil, field.ErrorList{field.Invalid(
+			refPath,
+			ref,
+			"cannot reference a Gateway because the Gateway API CRD is not installed",
+		)}
+	case apierrors.IsForbidden(err) || apierrors.IsUnauthorized(err):
+		return nil, field.ErrorList{field.InternalError(
+			refPath,
+			fmt.Errorf("cannot verify referenced Gateway %s/%s: %w", namespace, ref.Name, err),
+		)}
+	case err != nil:
+		logf.FromContext(ctx).Info(
+			"failed to look up Gateway for webhook validation; deferring verification to reconciliation",
+			"gateway", key,
+			"error", err.Error(),
+		)
+		return admission.Warnings{fmt.Sprintf(
+			"could not verify referenced Gateway %s/%s at admission time (%v); the controller will retry during reconciliation",
+			namespace, ref.Name, err,
+		)}, nil
+	default:
+		return nil, nil
+	}
 }
 
 func validateDisaggregatedScalingComponent(component *airunwayv1alpha1.ComponentScalingSpec, specPath *field.Path, componentName string, isDynamoMocker bool) field.ErrorList {

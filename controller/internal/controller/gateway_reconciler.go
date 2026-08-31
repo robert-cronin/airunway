@@ -84,7 +84,7 @@ func (r *ModelDeploymentReconciler) reconcileGateway(ctx context.Context, md *ai
 	}
 
 	// Resolve gateway configuration
-	gwConfig, err := r.resolveGatewayConfig(ctx)
+	gwConfig, err := r.resolveGatewayConfig(ctx, md)
 	if err != nil {
 		logger.Info("No gateway found for routing, skipping gateway reconciliation", "reason", err.Error())
 		r.setCondition(md, airunwayv1alpha1.ConditionTypeGatewayReady, metav1.ConditionFalse, "NoGateway", err.Error())
@@ -199,7 +199,25 @@ func (r *ModelDeploymentReconciler) reconcileGateway(ctx context.Context, md *ai
 }
 
 // resolveGatewayConfig determines which Gateway to use as the HTTPRoute parent.
-func (r *ModelDeploymentReconciler) resolveGatewayConfig(ctx context.Context) (*gateway.GatewayConfig, error) {
+func (r *ModelDeploymentReconciler) resolveGatewayConfig(ctx context.Context, md *airunwayv1alpha1.ModelDeployment) (*gateway.GatewayConfig, error) {
+	// A per-deployment reference takes precedence over controller-wide flags and
+	// auto-detection. Do not fall back when an explicit reference is broken: that
+	// could silently route a model through a different Gateway than requested.
+	if md != nil && md.Spec.Gateway != nil && md.Spec.Gateway.GatewayRef != nil {
+		ref := md.Spec.Gateway.GatewayRef
+		namespace := ref.Namespace
+		if namespace == "" {
+			namespace = md.Namespace
+		}
+
+		var gw gatewayv1.Gateway
+		key := client.ObjectKey{Name: ref.Name, Namespace: namespace}
+		if err := r.Get(ctx, key, &gw); err != nil {
+			return nil, fmt.Errorf("failed to get referenced Gateway %s/%s: %w", namespace, ref.Name, err)
+		}
+		return gatewayConfigFromResource(&gw), nil
+	}
+
 	// Try explicit configuration first
 	if cfg, err := r.GatewayDetector.GetGatewayConfig(); err == nil {
 		return cfg, nil
@@ -1354,7 +1372,7 @@ func (r *ModelDeploymentReconciler) cleanupGatewayAllowedRoutes(ctx context.Cont
 	logger := log.FromContext(ctx)
 
 	// Resolve gateway config; if we can't find the gateway, nothing to revert.
-	gwConfig, err := r.resolveGatewayConfig(ctx)
+	gwConfig, err := r.resolveGatewayConfig(ctx, md)
 	if err != nil {
 		return nil
 	}
@@ -1374,9 +1392,21 @@ func (r *ModelDeploymentReconciler) cleanupGatewayAllowedRoutes(ctx context.Cont
 		if other.UID == md.UID {
 			continue
 		}
-		// If another MD exists that hasn't opted out of gateway, keep the route.
+		// Keep the route only when another gateway-enabled ModelDeployment in
+		// this namespace selects this same Gateway. A deployment referencing a
+		// different Gateway must not strand this Gateway's namespace permission.
 		if other.Spec.Gateway == nil || other.Spec.Gateway.Enabled == nil || *other.Spec.Gateway.Enabled {
-			return nil
+			otherConfig, err := r.resolveGatewayConfig(ctx, other)
+			if err != nil {
+				// Cleanup is best effort. Preserve access on an ambiguous lookup
+				// rather than disrupting another deployment during a transient error.
+				logger.V(1).Info("Could not resolve Gateway for another ModelDeployment during cleanup; preserving allowedRoutes",
+					"modelDeployment", client.ObjectKeyFromObject(other), "error", err)
+				return nil
+			}
+			if otherConfig.GatewayName == gwConfig.GatewayName && otherConfig.GatewayNamespace == gwConfig.GatewayNamespace {
+				return nil
+			}
 		}
 	}
 
@@ -1413,7 +1443,7 @@ func (r *ModelDeploymentReconciler) cleanupGatewayAllowedRoutesForNamespace(ctx 
 		return
 	}
 
-	gwConfig, err := r.resolveGatewayConfig(ctx)
+	gwConfig, err := r.resolveGatewayConfig(ctx, nil)
 	if err != nil {
 		return
 	}

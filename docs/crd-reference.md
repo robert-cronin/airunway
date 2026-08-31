@@ -49,9 +49,16 @@ spec:
   gateway:
     enabled: true                # Optional: defaults to true when Gateway detected
     modelName: ""                # Optional: override model name for routing
+    gatewayRef:                  # Optional: select a Gateway for this deployment
+      name: "inference-gateway" # Required when gatewayRef is set
+      namespace: "default"      # Optional: defaults to the ModelDeployment namespace
 ```
 
 > **Note:** If `gateway.enabled` is explicitly set to `true` but the Gateway API Inference Extension CRDs are not installed, the controller sets a `GatewayReady=False` condition with reason `CRDsNotAvailable`. This surfaces as a status warning on the `ModelDeployment`.
+
+> **Gateway selection:** `gatewayRef` takes precedence over controller-wide
+> Gateway flags and auto-detection. The referenced Gateway must exist when the
+> `ModelDeployment` is admitted.
 
 ### spec.engine
 

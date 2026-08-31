@@ -282,6 +282,25 @@ spec:
                       enabled controls whether an InferencePool + HTTPRoute are created for this model.
                       Defaults to true when a Gateway is detected in the cluster.
                     type: boolean
+                  gatewayRef:
+                    description: |-
+                      gatewayRef references the Gateway used for this ModelDeployment.
+                      When namespace is omitted, the ModelDeployment namespace is used.
+                      When gatewayRef is omitted, the controller falls back to its global
+                      Gateway configuration and then to auto-detection.
+                    properties:
+                      name:
+                        description: name is the name of the Gateway.
+                        minLength: 1
+                        type: string
+                      namespace:
+                        description: |-
+                          namespace is the namespace of the Gateway.
+                          Defaults to the ModelDeployment namespace when omitted.
+                        type: string
+                    required:
+                    - name
+                    type: object
                   httpRouteRef:
                     description: |-
                       httpRouteRef references an existing HTTPRoute by name instead of auto-creating one.

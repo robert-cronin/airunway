@@ -171,16 +171,46 @@ kubectl get modeldeployment qwen3 -o jsonpath='{.status.gateway}'
 
 The controller auto-detects Gateway API Inference Extension CRDs at startup by querying the Kubernetes discovery API. If the CRDs (`InferencePool`, `HTTPRoute`, `Gateway`) are present, gateway integration is enabled. If not, it is silently disabled — no errors, no resources created.
 
-### Explicit Gateway Selection
+### Per-model Gateway Selection
 
-If you have multiple Gateways or want deterministic behavior, use controller flags:
+Select a specific Gateway for one `ModelDeployment` with
+`spec.gateway.gatewayRef`:
+
+```yaml
+apiVersion: airunway.ai/v1alpha1
+kind: ModelDeployment
+metadata:
+  name: internal-model
+  namespace: models
+spec:
+  model:
+    id: "Qwen/Qwen3-0.6B"
+  gateway:
+    gatewayRef:
+      name: internal-gateway
+      namespace: gateway-system
+```
+
+`name` is required. `namespace` is optional and defaults to the
+`ModelDeployment` namespace. The referenced Gateway must already exist when the
+`ModelDeployment` is created or updated.
+
+A per-model reference takes priority over controller-wide Gateway flags and
+auto-detection. This lets models in the same cluster use different Gateways,
+such as separate internal and public entry points or regional Gateways.
+
+### Controller-wide Gateway Selection
+
+To select one fallback Gateway for deployments that do not set `gatewayRef`,
+use controller flags:
 
 ```
 --gateway-name=inference-gateway
 --gateway-namespace=default
 ```
 
-When set, the controller always uses the specified Gateway as the HTTPRoute parent instead of auto-detecting.
+When set, the controller uses the specified Gateway as the HTTPRoute parent
+instead of auto-detecting, unless a `ModelDeployment` selects its own Gateway.
 
 ### Endpoint Picker (EPP) Configuration
 
@@ -280,8 +310,13 @@ Each `ModelDeployment` can override gateway behavior:
 ```yaml
 spec:
   gateway:
-    # Disable gateway integration for this specific deployment
-    enabled: false
+    # Select the Gateway for this deployment. Namespace defaults to this
+    # ModelDeployment's namespace when omitted.
+    gatewayRef:
+      name: internal-gateway
+      namespace: gateway-system
+    # Gateway integration is enabled by default when Gateway APIs are available
+    enabled: true
     # Override the model name used in routing (defaults to auto-discovered from /v1/models, or spec.model.id)
     modelName: "my-custom-model-name"
 ```
@@ -290,6 +325,8 @@ spec:
 |---|---|---|
 | `spec.gateway.enabled` | `true` (when Gateway detected) | Set to `false` to skip InferencePool/HTTPRoute creation |
 | `spec.gateway.modelName` | Auto-discovered or `spec.model.id` | Model name used for routing and in API requests |
+| `spec.gateway.gatewayRef.name` | None | Name of the Gateway for this deployment; required when `gatewayRef` is set |
+| `spec.gateway.gatewayRef.namespace` | `ModelDeployment` namespace | Namespace containing the referenced Gateway |
 
 ## Provider-Managed Gateway Resources
 

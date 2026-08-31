@@ -392,11 +392,28 @@ type GatewaySpec struct {
 	// Defaults to spec.model.servedName or spec.model.id
 	// +optional
 	ModelName string `json:"modelName,omitempty"`
+	// gatewayRef references the Gateway used for this ModelDeployment.
+	// When namespace is omitted, the ModelDeployment namespace is used.
+	// When gatewayRef is omitted, the controller falls back to its global
+	// Gateway configuration and then to auto-detection.
+	// +optional
+	GatewayRef *GatewayReference `json:"gatewayRef,omitempty"`
 	// httpRouteRef references an existing HTTPRoute by name instead of auto-creating one.
 	// When set, the controller skips HTTPRoute creation and uses the referenced route.
 	// The HTTPRoute must be in the same namespace as the ModelDeployment.
 	// +optional
 	HTTPRouteRef string `json:"httpRouteRef,omitempty"`
+}
+
+// GatewayReference identifies a Gateway resource.
+type GatewayReference struct {
+	// name is the name of the Gateway.
+	// +kubebuilder:validation:MinLength=1
+	Name string `json:"name"`
+	// namespace is the namespace of the Gateway.
+	// Defaults to the ModelDeployment namespace when omitted.
+	// +optional
+	Namespace string `json:"namespace,omitempty"`
 }
 
 // ModelDeploymentSpec defines the desired state of ModelDeployment

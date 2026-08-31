@@ -128,6 +128,83 @@ func newTestGateway(name, ns string) *gatewayv1.Gateway {
 	}
 }
 
+func TestGateway_ResolveGatewayConfig_PerDeploymentReferenceTakesPriority(t *testing.T) {
+	scheme := newTestScheme()
+	md := newModelDeployment("test-model", "model-ns")
+	md.Spec.Gateway = &airunwayv1alpha1.GatewaySpec{
+		GatewayRef: &airunwayv1alpha1.GatewayReference{Name: "model-gateway"},
+	}
+	referenced := newTestGateway("model-gateway", "model-ns")
+	detector := fakeDetector(true, "global-gateway", "global-ns")
+	r := newTestReconciler(scheme, detector, md, referenced)
+
+	got, err := r.resolveGatewayConfig(context.Background(), md)
+	if err != nil {
+		t.Fatalf("resolveGatewayConfig failed: %v", err)
+	}
+	if got.GatewayName != referenced.Name || got.GatewayNamespace != referenced.Namespace {
+		t.Fatalf("expected per-deployment Gateway %s/%s, got %s/%s",
+			referenced.Namespace, referenced.Name, got.GatewayNamespace, got.GatewayName)
+	}
+}
+
+func TestGateway_ResolveGatewayConfig_CrossNamespaceReference(t *testing.T) {
+	const (
+		sharedGatewayName      = "shared-gateway"
+		sharedGatewayNamespace = "gateway-ns"
+	)
+	scheme := newTestScheme()
+	md := newModelDeployment("test-model", "model-ns")
+	md.Spec.Gateway = &airunwayv1alpha1.GatewaySpec{
+		GatewayRef: &airunwayv1alpha1.GatewayReference{Name: sharedGatewayName, Namespace: sharedGatewayNamespace},
+	}
+	referenced := newTestGateway(sharedGatewayName, sharedGatewayNamespace)
+	r := newTestReconciler(scheme, fakeDetector(true, "global-gateway", "global-ns"), md, referenced)
+
+	got, err := r.resolveGatewayConfig(context.Background(), md)
+	if err != nil {
+		t.Fatalf("resolveGatewayConfig failed: %v", err)
+	}
+	if got.GatewayName != sharedGatewayName || got.GatewayNamespace != sharedGatewayNamespace {
+		t.Fatalf("expected cross-namespace Gateway gateway-ns/shared-gateway, got %s/%s",
+			got.GatewayNamespace, got.GatewayName)
+	}
+}
+
+func TestGateway_ResolveGatewayConfig_MissingReferenceDoesNotFallBack(t *testing.T) {
+	scheme := newTestScheme()
+	md := newModelDeployment("test-model", "model-ns")
+	md.Spec.Gateway = &airunwayv1alpha1.GatewaySpec{
+		GatewayRef: &airunwayv1alpha1.GatewayReference{Name: "missing-gateway"},
+	}
+	r := newTestReconciler(scheme, fakeDetector(true, "global-gateway", "global-ns"), md)
+
+	_, err := r.resolveGatewayConfig(context.Background(), md)
+	if err == nil {
+		t.Fatal("expected missing per-deployment Gateway to fail resolution")
+	}
+	if !apierrors.IsNotFound(err) {
+		t.Fatalf("expected wrapped NotFound error, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "model-ns/missing-gateway") {
+		t.Fatalf("expected error to identify missing Gateway, got %v", err)
+	}
+}
+
+func TestGateway_ResolveGatewayConfig_NoReferencePreservesGlobalFallback(t *testing.T) {
+	scheme := newTestScheme()
+	md := newModelDeployment("test-model", "model-ns")
+	r := newTestReconciler(scheme, fakeDetector(true, "global-gateway", "global-ns"), md)
+
+	got, err := r.resolveGatewayConfig(context.Background(), md)
+	if err != nil {
+		t.Fatalf("resolveGatewayConfig failed: %v", err)
+	}
+	if got.GatewayName != "global-gateway" || got.GatewayNamespace != "global-ns" {
+		t.Fatalf("expected global Gateway fallback, got %s/%s", got.GatewayNamespace, got.GatewayName)
+	}
+}
+
 // newBBRDeployment returns a stand-in for the shared body-based-router
 // Deployment installed by the upstream GAIE helm chart. It carries an unrelated
 // pod-template annotation so a wholesale rewrite is detectable, not just the
@@ -1574,6 +1651,55 @@ func TestGateway_CleanupKeepsAllowedRoutesWhenOtherMDExists(t *testing.T) {
 		}
 		if *l.AllowedRoutes.Namespaces.From != gatewayv1.NamespacesFromSelector {
 			t.Errorf("expected allowedRoutes.from=Selector (kept for other MD), got %s", *l.AllowedRoutes.Namespaces.From)
+		}
+	}
+}
+
+func TestGateway_CleanupIgnoresModelDeploymentUsingDifferentGateway(t *testing.T) {
+	scheme := newTestScheme()
+	targetGateway := gwWithNamespaceSelector("target-gateway", "target-ns", "model-ns")
+	otherGateway := gwWithNamespaceSelector("other-gateway", "other-ns", "model-ns")
+
+	md := newModelDeployment("test-model", "model-ns")
+	md.Spec.Gateway = &airunwayv1alpha1.GatewaySpec{
+		GatewayRef: &airunwayv1alpha1.GatewayReference{Name: "target-gateway", Namespace: "target-ns"},
+	}
+	otherMD := newModelDeployment("other-model", "model-ns")
+	otherMD.Spec.Gateway = &airunwayv1alpha1.GatewaySpec{
+		GatewayRef: &airunwayv1alpha1.GatewayReference{Name: "other-gateway", Namespace: "other-ns"},
+	}
+
+	detector := fakeDetector(true, "global-gateway", "global-ns")
+	detector.PatchGateway = true
+	r := newTestReconciler(scheme, detector, md, otherMD, targetGateway, otherGateway)
+
+	if err := r.cleanupGatewayAllowedRoutes(context.Background(), md); err != nil {
+		t.Fatalf("cleanupGatewayAllowedRoutes failed: %v", err)
+	}
+
+	var updatedTarget gatewayv1.Gateway
+	if err := r.Get(context.Background(), types.NamespacedName{Name: "target-gateway", Namespace: "target-ns"}, &updatedTarget); err != nil {
+		t.Fatalf("failed to get target Gateway: %v", err)
+	}
+	for _, listener := range updatedTarget.Spec.Listeners {
+		if listener.AllowedRoutes == nil || listener.AllowedRoutes.Namespaces == nil || listener.AllowedRoutes.Namespaces.From == nil {
+			t.Fatal("expected target Gateway allowedRoutes to be set")
+		}
+		if *listener.AllowedRoutes.Namespaces.From != gatewayv1.NamespacesFromSame {
+			t.Fatalf("expected target Gateway to remove model-ns, got from=%s", *listener.AllowedRoutes.Namespaces.From)
+		}
+	}
+
+	var unchangedOther gatewayv1.Gateway
+	if err := r.Get(context.Background(), types.NamespacedName{Name: "other-gateway", Namespace: "other-ns"}, &unchangedOther); err != nil {
+		t.Fatalf("failed to get other Gateway: %v", err)
+	}
+	for _, listener := range unchangedOther.Spec.Listeners {
+		if listener.AllowedRoutes == nil || listener.AllowedRoutes.Namespaces == nil || listener.AllowedRoutes.Namespaces.From == nil {
+			t.Fatal("expected other Gateway allowedRoutes to remain set")
+		}
+		if *listener.AllowedRoutes.Namespaces.From != gatewayv1.NamespacesFromSelector {
+			t.Fatalf("expected other Gateway to remain unchanged, got from=%s", *listener.AllowedRoutes.Namespaces.From)
 		}
 	}
 }
