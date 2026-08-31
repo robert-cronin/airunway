@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { DeploymentDetailsPage } from './DeploymentDetailsPage'
-import type { DeploymentStatus } from '@/lib/api'
+import type { DeploymentStatus, Model } from '@/lib/api'
 
 const deploymentMock = vi.hoisted(() => ({
   current: undefined as DeploymentStatus | undefined,
@@ -11,6 +11,10 @@ const deploymentMock = vi.hoisted(() => ({
 const deleteMutationMock = vi.hoisted(() => vi.fn())
 const chatMock = vi.hoisted(() => vi.fn())
 const toastMock = vi.hoisted(() => vi.fn())
+const modelMock = vi.hoisted(() => ({
+  current: undefined as Model | null | undefined,
+  isLoading: false,
+}))
 
 vi.mock('@/hooks/useDeployments', () => ({
   useDeployment: () => ({
@@ -26,6 +30,10 @@ vi.mock('@/hooks/useDeployments', () => ({
 vi.mock('@/hooks/useAutoscaler', () => ({
   useAutoscalerDetection: () => ({ data: undefined }),
   usePendingReasons: () => ({ data: { reasons: [] }, isLoading: false }),
+}))
+
+vi.mock('@/hooks/useModels', () => ({
+  useModel: () => ({ data: modelMock.current, isLoading: modelMock.isLoading }),
 }))
 
 vi.mock('@/hooks/useToast', () => ({
@@ -77,6 +85,21 @@ function createDeployment(overrides: Partial<DeploymentStatus> = {}): Deployment
   }
 }
 
+function createModel(overrides: Partial<Model> = {}): Model {
+  return {
+    id: 'Qwen/Qwen3-0.6B',
+    name: 'Qwen3 0.6B',
+    description: 'Tiny model ideal for development, testing, and edge deployments',
+    size: '0.6B',
+    task: 'text-generation',
+    conversational: true,
+    contextLength: 32768,
+    supportedEngines: ['vllm', 'sglang', 'trtllm'],
+    minGpuMemory: '4GB',
+    ...overrides,
+  }
+}
+
 function renderDetailsPage() {
   return render(
     <MemoryRouter initialEntries={[`/deployments/${deploymentMock.current?.name ?? 'missing'}?namespace=airunway-system`]}>
@@ -108,6 +131,8 @@ function streamResponse(chunks: string[]): Response {
 describe('DeploymentDetailsPage chat panel', () => {
   beforeEach(() => {
     deploymentMock.current = createDeployment()
+    modelMock.current = createModel()
+    modelMock.isLoading = false
     chatMock.mockReset()
     deleteMutationMock.mockReset()
     toastMock.mockReset()
@@ -247,5 +272,54 @@ describe('DeploymentDetailsPage chat panel', () => {
     await waitFor(() => {
       expect(transcript.scrollTop).toBe(4321)
     })
+  })
+})
+
+describe('DeploymentDetailsPage model details', () => {
+  beforeEach(() => {
+    deploymentMock.current = createDeployment()
+    modelMock.current = createModel()
+    modelMock.isLoading = false
+    chatMock.mockReset()
+    deleteMutationMock.mockReset()
+    toastMock.mockReset()
+  })
+
+  it('shows model details from the catalog', () => {
+    renderDetailsPage()
+
+    expect(screen.getByText('Qwen3 0.6B')).toBeInTheDocument()
+    expect(screen.getByText('Tiny model ideal for development, testing, and edge deployments')).toBeInTheDocument()
+    expect(screen.getByText('32,768 tokens')).toBeInTheDocument()
+    expect(screen.getByText('0.6B')).toBeInTheDocument()
+    expect(screen.getByText('Chat')).toBeInTheDocument()
+    expect(screen.getByText('4GB')).toBeInTheDocument()
+    expect(screen.getByText('TensorRT-LLM')).toBeInTheDocument()
+
+    expect(screen.queryByRole('link', { name: /view on hugging face/i })).not.toBeInTheDocument()
+  })
+
+  it('offers the model card when the deployment model is not in the catalog', () => {
+    deploymentMock.current = createDeployment({ modelId: 'acme/new-model' })
+    modelMock.current = null
+
+    renderDetailsPage()
+
+    expect(screen.getByText('acme/new-model')).toBeInTheDocument()
+    expect(screen.getByText('Open the Hugging Face model card for capabilities, limits, and usage guidance.')).toBeInTheDocument()
+    const modelCardLink = screen.getByRole('link', { name: /view on hugging face/i })
+    expect(modelCardLink).toHaveAttribute('href', 'https://huggingface.co/acme/new-model')
+    expect(modelCardLink).toHaveAttribute('target', '_blank')
+    expect(modelCardLink).toHaveAttribute('rel', 'noreferrer')
+  })
+
+  it('does not create a model-card link for an invalid model identifier', () => {
+    deploymentMock.current = createDeployment({ modelId: '../private?redirect=1' })
+    modelMock.current = null
+
+    renderDetailsPage()
+
+    expect(screen.getByText('../private?redirect=1')).toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: /view on hugging face/i })).not.toBeInTheDocument()
   })
 })

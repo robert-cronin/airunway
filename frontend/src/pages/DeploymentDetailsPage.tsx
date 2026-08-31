@@ -1,5 +1,6 @@
 import { useParams, useSearchParams, useNavigate } from 'react-router-dom'
 import { useDeployment, useDeleteDeployment } from '@/hooks/useDeployments'
+import { useModel } from '@/hooks/useModels'
 import { useToast } from '@/hooks/useToast'
 
 import { Badge } from '@/components/ui/badge'
@@ -8,7 +9,7 @@ import { DeploymentStatusBadge } from '@/components/deployments/DeploymentStatus
 import { MetricsTab } from '@/components/metrics'
 import { formatRelativeTime } from '@/lib/utils'
 import { getEngineDisplayName, getProviderDisplayName } from '@/lib/deploymentDisplay'
-import { Loader2, ArrowLeft, Trash2, Copy, Terminal, Globe, HardDrive } from 'lucide-react'
+import { Loader2, ArrowLeft, Trash2, Copy, Terminal, Globe, HardDrive, ExternalLink, Info } from 'lucide-react'
 import { useState } from 'react'
 import { buildPortForwardCommand } from '@airunway/shared'
 import {
@@ -25,6 +26,56 @@ import { DeploymentLogs } from '@/components/deployments/DeploymentLogs'
 import { ManifestViewer } from '@/components/deployments/ManifestViewer'
 import { ChatPanel } from '@/components/chat/ChatPanel'
 
+const HF_REPO_SEGMENT_PATTERN = /^[A-Za-z0-9._-]+$/
+
+function getHuggingFaceModelUrl(modelId: string): string | undefined {
+  const segments = modelId.split('/')
+  if (
+    segments.length < 1 ||
+    segments.length > 2 ||
+    segments.some((segment) =>
+      !segment ||
+      segment.length > 96 ||
+      segment === '.' ||
+      segment === '..' ||
+      !HF_REPO_SEGMENT_PATTERN.test(segment)
+    )
+  ) {
+    return undefined
+  }
+
+  return `https://huggingface.co/${segments.map(encodeURIComponent).join('/')}`
+}
+
+function formatModelPurpose(task: string, conversational?: boolean): string {
+  if (conversational) return 'Chat'
+  if (task === 'image-text-to-text') return 'Text and images'
+  if (task === 'text-generation') return 'Text generation'
+  return task.replace(/-/g, ' ')
+}
+
+function InfoHint({ text }: { text: string }) {
+  return (
+    <span className="relative group/hint inline-flex">
+      <button
+        type="button"
+        tabIndex={0}
+        aria-label={text}
+        title={text}
+        className="inline-flex items-center justify-center text-muted-foreground hover:text-foreground transition-colors"
+      >
+        <Info className="h-3.5 w-3.5" />
+      </button>
+      <span
+        role="tooltip"
+        className="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-max max-w-xs rounded-lg border border-white/10 bg-[#0F1419]/95 backdrop-blur-md px-3 py-1.5 text-sm text-popover-foreground shadow-md opacity-0 transition-opacity group-hover/hint:opacity-100 group-focus-within/hint:opacity-100 z-50"
+      >
+        {text}
+      </span>
+    </span>
+  )
+}
+
 export function DeploymentDetailsPage() {
   const { name } = useParams<{ name: string }>()
   const [searchParams] = useSearchParams()
@@ -35,6 +86,7 @@ export function DeploymentDetailsPage() {
   const [showDeleteDialog, setShowDeleteDialog] = useState(false)
 
   const { data: deployment, isLoading, error } = useDeployment(name, namespace)
+  const { data: model, isLoading: isModelLoading } = useModel(deployment?.modelId)
 
   // Autoscaler detection and pending reasons (only fetch when deployment is Pending)
   const { data: autoscaler } = useAutoscalerDetection()
@@ -102,6 +154,7 @@ export function DeploymentDetailsPage() {
   }
 
   const portForwardCommand = buildPortForwardCommand(deployment)
+  const huggingFaceModelUrl = getHuggingFaceModelUrl(deployment.modelId)
 
   // Gateway endpoint (when available)
   const hasGateway = !!deployment.gateway?.endpoint
@@ -181,8 +234,73 @@ export function DeploymentDetailsPage() {
 
       {/* Model Info */}
       <div className="glass-panel animate-slide-up" style={{ animationDelay: '100ms', animationFillMode: 'both' }}>
-        <h2 className="text-lg font-heading">Model</h2>
-        <p className="text-sm text-muted-foreground mt-1">{deployment.modelId}</p>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h2 className="text-lg font-heading">Model</h2>
+            {model ? (
+              <>
+                <p className="font-medium mt-1">{model.name}</p>
+                <p className="text-sm text-muted-foreground font-mono-code break-all">{deployment.modelId}</p>
+              </>
+            ) : (
+              <p className="text-sm text-muted-foreground mt-1 font-mono-code break-all">{deployment.modelId}</p>
+            )}
+          </div>
+          {!isModelLoading && !model && huggingFaceModelUrl && (
+            <Button asChild variant="outline" size="sm">
+              <a href={huggingFaceModelUrl} target="_blank" rel="noreferrer">
+                View on Hugging Face
+                <ExternalLink className="h-3.5 w-3.5" />
+              </a>
+            </Button>
+          )}
+        </div>
+
+        {model ? (
+          <div className="mt-4 space-y-4">
+            <p className="text-sm text-muted-foreground">{model.description}</p>
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+              {model.contextLength && (
+                <div>
+                  <div className="flex items-center gap-1.5">
+                    <p className="text-label text-slate-500">Context window</p>
+                    <InfoHint text="The most text the model can consider at once. A token is roughly part of a word." />
+                  </div>
+                  <p className="font-medium">{model.contextLength.toLocaleString()} tokens</p>
+                </div>
+              )}
+              <div>
+                <p className="text-label text-slate-500">Model size</p>
+                <p className="font-medium">{model.size}</p>
+              </div>
+              <div>
+                <p className="text-label text-slate-500">Designed for</p>
+                <p className="font-medium">{formatModelPurpose(model.task, model.conversational)}</p>
+              </div>
+              {model.minGpuMemory && (
+                <div>
+                  <div className="flex items-center gap-1.5">
+                    <p className="text-label text-slate-500">Minimum memory</p>
+                    <InfoHint text="An approximate amount of graphics memory needed to run this model." />
+                  </div>
+                  <p className="font-medium">{model.minGpuMemory}</p>
+                </div>
+              )}
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-sm text-muted-foreground">Compatible model servers</span>
+              {model.supportedEngines.map((engine) => (
+                <Badge key={engine} variant="secondary" className="text-xs">
+                  {getEngineDisplayName(engine)}
+                </Badge>
+              ))}
+            </div>
+          </div>
+        ) : !isModelLoading && huggingFaceModelUrl ? (
+          <p className="text-sm text-muted-foreground mt-4">
+            Open the Hugging Face model card for capabilities, limits, and usage guidance.
+          </p>
+        ) : null}
       </div>
 
       {/* Storage Volumes - shown when storage is configured */}
