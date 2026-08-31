@@ -205,6 +205,8 @@ helm install body-based-router \
   oci://registry.k8s.io/gateway-api-inference-extension/charts/body-based-routing
 ```
 
+The dashboard also reports this component under **Settings → Integrations → Gateway API**. It shows a green status when a pod from the upstream chart is running and ready, and provides a copyable command pinned to AI Runway's GAIE version when manual setup is needed. The check uses the chart's `app.kubernetes.io/name=body-based-routing` pod label across all namespaces.
+
 > [!NOTE]
 > The BBR chart version should match the GAIE version used by AI Runway. The pinned value lives in [`/versions.env`](https://github.com/ai-runway/airunway/blob/main/versions.env); update both at the same time when bumping.
 

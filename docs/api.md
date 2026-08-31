@@ -356,7 +356,7 @@ Check if Helm CLI is available.
 
 ### GET /installation/gateway/status
 
-Check whether the Gateway API and Gateway API Inference Extension (GAIE) CRDs are installed in the cluster, and report the pinned GAIE version the controller expects.
+Check whether the Gateway API and Gateway API Inference Extension (GAIE) CRDs are installed in the cluster, whether body-based request routing is ready, and report the pinned GAIE version the controller expects.
 
 **Response:**
 
@@ -369,6 +369,8 @@ Check whether the Gateway API and Gateway API Inference Extension (GAIE) CRDs ar
   "pinnedVersion": "v1.5.0",
   "gatewayAvailable": true,
   "gatewayEndpoint": "10.0.0.50",
+  "bodyBasedRouterReady": true,
+  "bodyBasedRouterInstallCommand": "helm upgrade --install body-based-router --namespace default --create-namespace --set provider.name=istio --version \"v1.5.0\" oci://registry.k8s.io/gateway-api-inference-extension/charts/body-based-routing",
   "message": "Gateway API and Inference Extension CRDs are installed. Gateway is available.",
   "installCommands": [
     "kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/latest/download/standard-install.yaml",
@@ -380,6 +382,8 @@ Check whether the Gateway API and Gateway API Inference Extension (GAIE) CRDs ar
 **Notes:**
 
 - `pinnedVersion` is the GAIE version the controller is built against (`PINNED_GAIE_VERSION` from `@airunway/shared`, sourced from `versions.env`).
+- `bodyBasedRouterReady` is true when a pod installed by the upstream body-based-routing chart is running and ready in any namespace.
+- `bodyBasedRouterInstallCommand` is a pinned manual example for Istio. Change `provider.name` for another gateway implementation.
 - `installCommands` are the manual fallback commands; prefer the `POST` endpoint below when Helm/kubectl is available server-side.
 
 ### POST /installation/gateway/install-crds

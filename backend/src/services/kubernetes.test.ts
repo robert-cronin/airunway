@@ -21,6 +21,7 @@ type MockableKubernetesService = {
   apiExtensionsApi: Record<string, (arg: K8sCallArg) => Promise<unknown>>;
   customObjectsApi: Record<string, (arg: K8sCallArg) => Promise<unknown>>;
   getGatewayStatus: () => Promise<unknown>;
+  checkBodyBasedRouterReady: () => Promise<boolean>;
   createUserKubeConfig: (token: string) => unknown;
   kc: unknown;
 };
@@ -76,13 +77,16 @@ describe('KubernetesService - CRD Version Annotation Extraction', () => {
       'app.kubernetes.io/version',
     ])).toBeUndefined();
   });
+});
 
-
+describe('KubernetesService - Gateway installation status', () => {
   test('checks Gateway CRD status with a single read per CRD', async () => {
     const service = asMockable();
     const originalApiExtensionsApi = service.apiExtensionsApi;
+    const originalCoreV1Api = service.coreV1Api;
     const originalGetGatewayStatus = service.getGatewayStatus;
     const readCalls: string[] = [];
+    const podSelectors: string[] = [];
 
     service.apiExtensionsApi = {
       readCustomResourceDefinition: async (arg: K8sCallArg) => {
@@ -112,6 +116,19 @@ describe('KubernetesService - CRD Version Annotation Extraction', () => {
         throw { statusCode: 404 };
       },
     };
+    service.coreV1Api = {
+      listPodForAllNamespaces: async (arg: K8sCallArg) => {
+        podSelectors.push(arg.labelSelector as string);
+        return {
+          items: [{
+            status: {
+              phase: 'Running',
+              containerStatuses: [{ ready: true }],
+            },
+          }],
+        };
+      },
+    };
     service.getGatewayStatus = async () => ({ available: true, endpoint: 'gateway.example.com' });
 
     try {
@@ -121,15 +138,57 @@ describe('KubernetesService - CRD Version Annotation Extraction', () => {
         'gateways.gateway.networking.k8s.io',
         'inferencepools.inference.networking.k8s.io',
       ]);
+      expect(podSelectors).toEqual(['app.kubernetes.io/name=body-based-routing']);
       expect(status.gatewayApiInstalled).toBe(true);
       expect(status.inferenceExtInstalled).toBe(true);
       expect(status.gatewayApiVersion).toBe('v1.2.1');
       expect(status.inferenceExtVersion).toBe('v1.5.0');
       expect(status.gatewayAvailable).toBe(true);
       expect(status.gatewayEndpoint).toBe('gateway.example.com');
+      expect(status.bodyBasedRouterReady).toBe(true);
+      expect(status.bodyBasedRouterInstallCommand).toContain('--version "v1.5.0"');
     } finally {
       service.apiExtensionsApi = originalApiExtensionsApi;
+      service.coreV1Api = originalCoreV1Api;
       service.getGatewayStatus = originalGetGatewayStatus;
+    }
+  });
+
+  test('reports the Body-Based Router as not ready when matching pods are absent or unready', async () => {
+    const service = asMockable();
+    const originalCoreV1Api = service.coreV1Api;
+
+    try {
+      for (const items of [
+        [],
+        [{ status: { phase: 'Pending', containerStatuses: [{ ready: false }] } }],
+        [{ status: { phase: 'Running', containerStatuses: [{ ready: false }] } }],
+      ]) {
+        service.coreV1Api = {
+          listPodForAllNamespaces: async () => ({ items }),
+        };
+
+        expect(await service.checkBodyBasedRouterReady()).toBe(false);
+      }
+    } finally {
+      service.coreV1Api = originalCoreV1Api;
+    }
+  });
+
+  test('fails the Body-Based Router readiness probe closed without failing gateway status', async () => {
+    const service = asMockable();
+    const originalCoreV1Api = service.coreV1Api;
+
+    service.coreV1Api = {
+      listPodForAllNamespaces: async () => {
+        throw { statusCode: 403, message: 'forbidden' };
+      },
+    };
+
+    try {
+      expect(await service.checkBodyBasedRouterReady()).toBe(false);
+    } finally {
+      service.coreV1Api = originalCoreV1Api;
     }
   });
 });

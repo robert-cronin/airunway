@@ -1003,6 +1003,8 @@ describe('Gateway Installation Routes', () => {
           pinnedVersion: PINNED_GAIE_VERSION,
           gatewayAvailable: true,
           gatewayEndpoint: '10.0.0.50',
+          bodyBasedRouterReady: true,
+          bodyBasedRouterInstallCommand: `helm upgrade --install body-based-router --version "${PINNED_GAIE_VERSION}" chart`,
           message: 'Gateway API and Inference Extension CRDs are installed. Gateway is available.',
           installCommands: [
             'kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/latest/download/standard-install.yaml',
@@ -1022,6 +1024,8 @@ describe('Gateway Installation Routes', () => {
       expect(data.pinnedVersion).toBe(PINNED_GAIE_VERSION);
       expect(data.gatewayAvailable).toBe(true);
       expect(data.gatewayEndpoint).toBe('10.0.0.50');
+      expect(data.bodyBasedRouterReady).toBe(true);
+      expect(data.bodyBasedRouterInstallCommand).toContain(PINNED_GAIE_VERSION);
       expect(data.installCommands).toHaveLength(2);
     });
 
@@ -1032,6 +1036,8 @@ describe('Gateway Installation Routes', () => {
           inferenceExtInstalled: false,
           pinnedVersion: PINNED_GAIE_VERSION,
           gatewayAvailable: false,
+          bodyBasedRouterReady: false,
+          bodyBasedRouterInstallCommand: `helm upgrade --install body-based-router --version "${PINNED_GAIE_VERSION}" chart`,
           message: 'Gateway API and Inference Extension CRDs are not installed.',
           installCommands: [
             'kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/latest/download/standard-install.yaml',

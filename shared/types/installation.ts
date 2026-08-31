@@ -163,6 +163,10 @@ export interface GatewayCRDStatus {
   pinnedVersion: string;
   gatewayAvailable: boolean;
   gatewayEndpoint?: string;
+  /** Whether an upstream Body-Based Router pod is running and ready. */
+  bodyBasedRouterReady?: boolean;
+  /** Version-pinned manual Helm command for installing the Body-Based Router. */
+  bodyBasedRouterInstallCommand?: string;
   message: string;
   installCommands: string[];
 }

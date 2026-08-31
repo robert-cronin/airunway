@@ -45,6 +45,7 @@ import {
   Zap,
   Trash2,
   Globe,
+  Info,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useSearchParams } from 'react-router-dom'
@@ -146,6 +147,28 @@ const selectDefaultRuntimeId = (runtimes: RuntimeSelectionMetadata[] | undefined
   }
 
   return 'dynamo'
+}
+
+function InfoHint({ text }: { text: string }) {
+  return (
+    <span className="relative group/hint inline-flex">
+      <button
+        type="button"
+        tabIndex={0}
+        aria-label={text}
+        title={text}
+        className="inline-flex items-center justify-center text-muted-foreground hover:text-foreground transition-colors"
+      >
+        <Info className="h-3.5 w-3.5" />
+      </button>
+      <span
+        role="tooltip"
+        className="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-max max-w-xs rounded-lg border border-white/10 bg-[#0F1419]/95 backdrop-blur-md px-3 py-1.5 text-sm text-popover-foreground shadow-md opacity-0 transition-opacity group-hover/hint:opacity-100 group-focus-within/hint:opacity-100 z-50"
+      >
+        {text}
+      </span>
+    </span>
+  )
 }
 
 export function SettingsPage() {
@@ -1036,7 +1059,7 @@ export function SettingsPage() {
               ) : (
                 <>
                   {/* CRD Status */}
-                  <div className="grid grid-cols-2 gap-4 text-sm">
+                  <div className="grid grid-cols-1 gap-4 text-sm md:grid-cols-3">
                     <div className="flex items-center justify-between rounded-lg bg-muted p-3">
                       <span>Gateway API CRDs</span>
                       {gatewayCRDStatus?.gatewayApiInstalled ? (
@@ -1053,6 +1076,17 @@ export function SettingsPage() {
                         )}
                       </div>
                       {gatewayCRDStatus?.inferenceExtInstalled ? (
+                        <CheckCircle className="h-4 w-4 text-green-500" />
+                      ) : (
+                        <XCircle className="h-4 w-4 text-red-500" />
+                      )}
+                    </div>
+                    <div className="flex items-center justify-between rounded-lg bg-muted p-3">
+                      <div className="flex items-center gap-1">
+                        <span>Body-based request routing</span>
+                        <InfoHint text="Reads the model name from each request so one gateway can send it to the right model." />
+                      </div>
+                      {gatewayCRDStatus?.bodyBasedRouterReady ? (
                         <CheckCircle className="h-4 w-4 text-green-500" />
                       ) : (
                         <XCircle className="h-4 w-4 text-red-500" />
@@ -1162,6 +1196,33 @@ export function SettingsPage() {
                             </Button>
                           </div>
                         ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {gatewayCRDStatus?.bodyBasedRouterInstallCommand && (
+                    <div className="space-y-2">
+                      <span className="text-sm font-medium">Manual request-routing setup</span>
+                      <p className="text-sm text-muted-foreground">
+                        This example installs into the default location for Istio. If your gateway uses another location or provider, adjust the namespace and provider name before running it.
+                      </p>
+                      <div className="flex items-center gap-2">
+                        <code className="flex-1 rounded bg-muted px-3 py-2 text-xs font-mono overflow-x-auto">
+                          {gatewayCRDStatus.bodyBasedRouterInstallCommand}
+                        </code>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => {
+                            navigator.clipboard.writeText(gatewayCRDStatus.bodyBasedRouterInstallCommand || '')
+                            toast({
+                              title: 'Copied',
+                              description: 'Command copied to clipboard',
+                            })
+                          }}
+                        >
+                          Copy
+                        </Button>
                       </div>
                     </div>
                   )}

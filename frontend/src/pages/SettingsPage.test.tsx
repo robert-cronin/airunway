@@ -4,6 +4,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { PINNED_GAIE_VERSION } from '@airunway/shared'
 import { SettingsPage } from './SettingsPage'
 
+const bodyBasedRouterInstallCommand = `helm upgrade --install body-based-router --namespace default --create-namespace --set provider.name=istio --version "${PINNED_GAIE_VERSION}" oci://registry.k8s.io/gateway-api-inference-extension/charts/body-based-routing`
+
 const mutateAsync = vi.fn()
 const refetch = vi.fn()
 const startOAuth = vi.fn()
@@ -33,6 +35,8 @@ let mockGatewayStatus = {
   gatewayApiInstalled: false,
   inferenceExtInstalled: false,
   gatewayAvailable: false,
+  bodyBasedRouterReady: false,
+  bodyBasedRouterInstallCommand,
   installCommands: [] as string[],
   message: '',
   pinnedVersion: PINNED_GAIE_VERSION,
@@ -327,6 +331,8 @@ describe('SettingsPage', () => {
       gatewayApiInstalled: false,
       inferenceExtInstalled: false,
       gatewayAvailable: false,
+      bodyBasedRouterReady: false,
+      bodyBasedRouterInstallCommand,
       installCommands: [],
       message: '',
       pinnedVersion: PINNED_GAIE_VERSION,
@@ -745,6 +751,8 @@ describe('SettingsPage', () => {
       // this test continues to exercise the "installed differs from pinned"
       // path after future version bumps.
       inferenceExtVersion: 'v1.4.0',
+      bodyBasedRouterReady: true,
+      bodyBasedRouterInstallCommand,
     }
 
     render(
@@ -756,6 +764,35 @@ describe('SettingsPage', () => {
     const inferenceExtensionLabel = screen.getByText('Inference Extension').closest('div')
     expect(inferenceExtensionLabel).toHaveTextContent('(v1.4.0)')
     expect(inferenceExtensionLabel).not.toHaveTextContent(`(${PINNED_GAIE_VERSION})`)
+  })
+
+  it('shows missing body-based request routing and a copyable manual setup command', () => {
+    render(
+      <MemoryRouter initialEntries={['/settings?tab=integrations']}>
+        <SettingsPage />
+      </MemoryRouter>
+    )
+
+    const routerStatus = screen.getByText('Body-based request routing').closest('.rounded-lg')
+    expect(routerStatus?.querySelector('svg.text-red-500')).not.toBeNull()
+    expect(screen.getByRole('button', { name: /reads the model name from each request/i })).toBeInTheDocument()
+    const manualSetup = screen.getByText('Manual request-routing setup').closest('div')
+    expect(within(manualSetup as HTMLElement).getByRole('button', { name: 'Copy' })).toBeInTheDocument()
+    expect(screen.getByText(bodyBasedRouterInstallCommand)).toBeInTheDocument()
+    expect(screen.getByText(/this example installs into the default location for istio/i)).toBeInTheDocument()
+  })
+
+  it('shows body-based request routing as ready when a ready router is detected', () => {
+    mockGatewayStatus.bodyBasedRouterReady = true
+
+    render(
+      <MemoryRouter initialEntries={['/settings?tab=integrations']}>
+        <SettingsPage />
+      </MemoryRouter>
+    )
+
+    const routerStatus = screen.getByText('Body-based request routing').closest('.rounded-lg')
+    expect(routerStatus?.querySelector('svg.text-green-500')).not.toBeNull()
   })
 
   it('uses the Hugging Face emoji on the connect button', () => {

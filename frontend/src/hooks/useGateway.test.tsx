@@ -20,6 +20,8 @@ describe('useGatewayCRDStatus', () => {
     expect(result.current.data?.gatewayApiVersion).toBe('v1.2.1')
     expect(result.current.data?.inferenceExtVersion).toBe(PINNED_GAIE_VERSION)
     expect(result.current.data?.pinnedVersion).toBe(PINNED_GAIE_VERSION)
+    expect(result.current.data?.bodyBasedRouterReady).toBe(false)
+    expect(result.current.data?.bodyBasedRouterInstallCommand).toContain(PINNED_GAIE_VERSION)
     expect(result.current.data?.installCommands).toHaveLength(2)
   })
 })

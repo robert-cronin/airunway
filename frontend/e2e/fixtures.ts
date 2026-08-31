@@ -158,6 +158,8 @@ export async function mockApiRoutes(page: Page) {
       return json(route, {
         gatewayApiInstalled: true, inferenceExtInstalled: true, pinnedVersion: PINNED_GAIE_VERSION,
         gatewayAvailable: false,
+        bodyBasedRouterReady: false,
+        bodyBasedRouterInstallCommand: `helm upgrade --install body-based-router --namespace default --create-namespace --set provider.name=istio --version "${PINNED_GAIE_VERSION}" oci://registry.k8s.io/gateway-api-inference-extension/charts/body-based-routing`,
         message: 'Gateway API and Inference Extension CRDs are installed.',
         installCommands: [],
       })

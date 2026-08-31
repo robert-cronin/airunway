@@ -29,6 +29,8 @@ const INFERENCE_PROVIDER_CONFIG_CRD = {
 
 const GATEWAY_API_CRD_NAME = 'gateways.gateway.networking.k8s.io';
 const INFERENCE_POOL_CRD_NAME = 'inferencepools.inference.networking.k8s.io';
+const BODY_BASED_ROUTER_POD_SELECTOR = 'app.kubernetes.io/name=body-based-routing';
+const BODY_BASED_ROUTER_CHART = 'oci://registry.k8s.io/gateway-api-inference-extension/charts/body-based-routing';
 
 const GATEWAY_API_VERSION_ANNOTATIONS = [
   'gateway.networking.k8s.io/bundle-version',
@@ -2377,9 +2379,10 @@ class KubernetesService {
   async checkGatewayCRDStatus(): Promise<GatewayCRDStatus> {
     const { PINNED_GAIE_VERSION, GAIE_CRD_URL, GATEWAY_API_CRD_URL } = await import('@airunway/shared');
 
-    const [gatewayApiStatus, inferenceExtStatus] = await Promise.all([
+    const [gatewayApiStatus, inferenceExtStatus, bodyBasedRouterReady] = await Promise.all([
       this.getCRDStatusFromAnnotations(GATEWAY_API_CRD_NAME, GATEWAY_API_VERSION_ANNOTATIONS),
       this.getCRDStatusFromAnnotations(INFERENCE_POOL_CRD_NAME, INFERENCE_EXTENSION_VERSION_ANNOTATIONS),
+      this.checkBodyBasedRouterReady(),
     ]);
 
     const gatewayApiInstalled = gatewayApiStatus.installed;
@@ -2422,12 +2425,38 @@ class KubernetesService {
       pinnedVersion: PINNED_GAIE_VERSION,
       gatewayAvailable,
       gatewayEndpoint,
+      bodyBasedRouterReady,
+      bodyBasedRouterInstallCommand: `helm upgrade --install body-based-router --namespace default --create-namespace --set provider.name=istio --version "${PINNED_GAIE_VERSION}" ${BODY_BASED_ROUTER_CHART}`,
       message,
       installCommands: [
         `kubectl apply -f ${GATEWAY_API_CRD_URL}`,
         `kubectl apply -f ${GAIE_CRD_URL}`,
       ],
     };
+  }
+
+  /**
+   * Check whether the upstream Body-Based Router has at least one ready pod.
+   * The Helm chart applies this stable app label, and the dashboard already has
+   * cluster-wide pod-list permission for its existing health probes.
+   */
+  private async checkBodyBasedRouterReady(): Promise<boolean> {
+    try {
+      const response = await withRetry(
+        () => this.coreV1Api.listPodForAllNamespaces({
+          labelSelector: BODY_BASED_ROUTER_POD_SELECTOR,
+        }),
+        { operationName: 'checkBodyBasedRouterReady', maxRetries: 1 },
+      );
+
+      return response.items.some((pod) => isRunningAndReadyPod(pod));
+    } catch (error) {
+      logger.warn(
+        { error: getK8sErrorMessage(error) },
+        'Unable to check Body-Based Router readiness',
+      );
+      return false;
+    }
   }
 
   /**
