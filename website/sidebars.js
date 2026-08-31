@@ -44,6 +44,12 @@ const sidebars = {
     },
     {
       type: 'category',
+      label: 'Integrations',
+      collapsed: false,
+      items: ['integrations/semantic-router'],
+    },
+    {
+      type: 'category',
       label: 'Contributing',
       collapsed: false,
       items: ['standards'],

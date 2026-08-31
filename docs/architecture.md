@@ -106,6 +106,12 @@ AI Runway optionally integrates with the [Gateway API Inference Extension](https
 
 The feature is auto-detected at startup and silently disabled if the required CRDs are not present. See [Gateway Integration](gateway.md) for full details.
 
+[vLLM Semantic Router](integrations/semantic-router.md) can be added as an
+optional request-processing layer between clients and the Gateway or model
+Services. AI Runway remains responsible for deploying and maintaining model
+endpoints, while Semantic Router can classify requests, select a model, cache
+similar responses, and apply prompt or response safety policy.
+
 ## Documentation
 
 For detailed documentation on specific topics, see:
@@ -120,6 +126,7 @@ For detailed documentation on specific topics, see:
 | [Observability](observability.md) | Prometheus metrics and Kubernetes events |
 | [Versioning & Upgrades](versioning-upgrades.md) | API versioning strategy, controller upgrades, compatibility matrix |
 | [Gateway Integration](gateway.md) | Gateway API Inference Extension setup and usage |
+| [vLLM Semantic Router](integrations/semantic-router.md) | Optional semantic routing, caching, and guardrails in front of AI Runway models |
 | [Design Decisions](design-decisions.md) | Alternatives considered, testing strategy, known limitations, out of scope |
 | [API Reference](api.md) | REST API endpoint documentation |
 | [Development Guide](development.md) | Setup, build, and testing instructions |

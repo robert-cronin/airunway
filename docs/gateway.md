@@ -234,6 +234,23 @@ See the [upstream multi-model guide](https://gateway-api-inference-extension.sig
 > inert `airunway.ai/bbr-restarted` annotation, which nothing reads and which is
 > safe to leave in place.
 
+### Alternative routing strategies
+
+BBR performs deterministic routing: it copies the request's `model` field into
+`X-Gateway-Model-Name`, which AI Runway-generated `HTTPRoute` resources match.
+For request-aware selection, [vLLM Semantic Router](integrations/semantic-router.md)
+can classify the prompt and choose a model by domain, complexity, policy, or
+other semantic signals. It can also apply response caching and safety controls
+before forwarding the request.
+
+Semantic Router emits `x-selected-model`, not BBR's
+`X-Gateway-Model-Name`. To use it as the model selector, set
+`spec.gateway.httpRouteRef` and provide an `HTTPRoute` that matches
+`x-selected-model`. AI Runway still manages the model's `InferencePool` and
+Endpoint Picker. Do not run BBR and Semantic Router as competing selectors on
+the same listener; see the integration guide for the complete header and route
+contract.
+
 ### Auto-detection with Multiple Gateways
 
 When no explicit gateway is configured and multiple Gateway resources exist in the cluster, the controller looks for one labeled with:
@@ -290,6 +307,7 @@ spec:
 |---|---|---|
 | `spec.gateway.enabled` | `true` (when Gateway detected) | Set to `false` to skip InferencePool/HTTPRoute creation |
 | `spec.gateway.modelName` | Auto-discovered or `spec.model.id` | Model name used for routing and in API requests |
+| `spec.gateway.httpRouteRef` | Empty | Reference a same-namespace HTTPRoute instead of letting AI Runway create one |
 
 ## Provider-Managed Gateway Resources
 
