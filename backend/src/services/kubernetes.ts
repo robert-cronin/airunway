@@ -29,7 +29,7 @@ const INFERENCE_PROVIDER_CONFIG_CRD = {
 
 const GATEWAY_API_CRD_NAME = 'gateways.gateway.networking.k8s.io';
 const INFERENCE_POOL_CRD_NAME = 'inferencepools.inference.networking.k8s.io';
-const BODY_BASED_ROUTER_POD_SELECTOR = 'app.kubernetes.io/name=body-based-routing';
+const BODY_BASED_ROUTER_POD_SELECTOR = 'app=body-based-router';
 const BODY_BASED_ROUTER_CHART = 'oci://registry.k8s.io/gateway-api-inference-extension/charts/body-based-routing';
 
 const GATEWAY_API_VERSION_ANNOTATIONS = [

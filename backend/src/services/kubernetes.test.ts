@@ -138,7 +138,7 @@ describe('KubernetesService - Gateway installation status', () => {
         'gateways.gateway.networking.k8s.io',
         'inferencepools.inference.networking.k8s.io',
       ]);
-      expect(podSelectors).toEqual(['app.kubernetes.io/name=body-based-routing']);
+      expect(podSelectors).toEqual(['app=body-based-router']);
       expect(status.gatewayApiInstalled).toBe(true);
       expect(status.inferenceExtInstalled).toBe(true);
       expect(status.gatewayApiVersion).toBe('v1.2.1');
