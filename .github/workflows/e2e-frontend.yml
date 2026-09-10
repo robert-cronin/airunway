@@ -2,7 +2,7 @@ name: E2E Frontend
 
 on:
   push:
-    branches: [main]
+    branches: [main, rehearsal/v0.8.0]
     paths:
       - 'frontend/**'
       - 'shared/**'

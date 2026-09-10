@@ -1,0 +1,114 @@
+#!/usr/bin/env python3
+"""Fork push entry point (branch/tag) and installed Git pre-push hook."""
+
+import os
+from pathlib import Path
+import re
+import subprocess
+import sys
+
+
+FORK_SSH = "git@github.com:robert-cronin/airunway.git"
+FORK_URLS = frozenset(
+    (
+        FORK_SSH,
+        "ssh://git@github.com/robert-cronin/airunway.git",
+        "https://github.com/robert-cronin/airunway.git",
+    )
+)
+REFS = frozenset(("refs/heads/rehearsal/v0.8.0", "refs/tags/v0.8.0"))
+ZERO = "0" * 40
+PUSH_REF_ENV = "AIRUNWAY_FORK_REHEARSAL_PUSH_REF"
+
+
+def read_pin(hook):
+    expected = hook.with_name("rehearsal-expected-commit").read_text().strip()
+    if not re.fullmatch(r"[0-9a-f]{40}", expected) or expected == ZERO:
+        raise ValueError("the reviewed rehearsal commit must be pinned beside the installed hook")
+    return expected
+
+
+def git_output(*args):
+    return subprocess.check_output(["git", *args], text=True, stderr=subprocess.DEVNULL).strip()
+
+
+def push_selected_ref(selection):
+    ref = {"branch": "refs/heads/rehearsal/v0.8.0", "tag": "refs/tags/v0.8.0"}[selection]
+    hooks = Path(git_output("rev-parse", "--absolute-git-dir")) / "fork-rehearsal-hooks"
+    installed = hooks / "pre-push"
+    if not os.access(installed, os.X_OK) or installed.read_bytes() != Path(__file__).read_bytes():
+        raise ValueError("install the current reviewed hook in the dedicated hooks directory first")
+    expected = read_pin(installed)
+    if git_output("rev-parse", "--verify", f"{ref}^{{commit}}") != expected:
+        raise ValueError("selected ref does not point to the pinned reviewed commit")
+    committed_hook = subprocess.check_output(
+        ["git", "show", f"{expected}:.github/rehearsal/pre-push"], stderr=subprocess.DEVNULL,
+    )
+    if committed_hook != installed.read_bytes():
+        raise ValueError("the pinned commit must include the reviewed hook")
+    if git_output("status", "--porcelain", "--untracked-files=all", "--", ".github"):
+        raise ValueError("commit and review the workflow/safeguard changes before pushing")
+    env = os.environ.copy()
+    env[PUSH_REF_ENV] = ref
+    # Git omits some mirror deletions from pre-push stdin. Only this fixed
+    # command may enter the hook; do not rely on stdin to detect mirror mode.
+    # remote.<name>.mirror is applied after option parsing, so override it too.
+    command = [
+        "git", "-c", f"core.hooksPath={hooks}",
+        "-c", f"remote.{FORK_SSH}.mirror=false", "-c", "push.followTags=false",
+        "push", "--no-mirror", "--no-follow-tags", "--no-recurse-submodules",
+        FORK_SSH, f"{ref}:{ref}",
+    ]
+    return subprocess.run(command, env=env, check=False).returncode
+
+
+def main():
+    try:
+        if len(sys.argv) == 2 and sys.argv[1] in ("branch", "tag"):
+            return push_selected_ref(sys.argv[1])
+        if len(sys.argv) != 3 or sys.argv[2] not in FORK_URLS:
+            raise ValueError("remote must be an exact approved fork URL")
+        allowed_ref = os.environ.get(PUSH_REF_ENV)
+        if allowed_ref not in REFS:
+            raise ValueError("use python3 .github/rehearsal/pre-push branch or tag; direct Git pushes are disabled")
+        expected = read_pin(Path(__file__))
+        updates = sys.stdin.read().splitlines()
+        if not updates:
+            raise ValueError("no permitted ref update supplied")
+        seen = set()
+        for update in updates:
+            fields = update.split()
+            if len(fields) != 4:
+                raise ValueError("malformed ref update")
+            local_ref, local_oid, remote_ref, remote_oid = fields
+            if local_ref != remote_ref or remote_ref != allowed_ref or remote_ref in seen:
+                raise ValueError("only the selected rehearsal ref may be pushed")
+            seen.add(remote_ref)
+            if not all(re.fullmatch(r"[0-9a-f]{40}", oid) for oid in (local_oid, remote_oid)):
+                raise ValueError("malformed object id")
+            if local_oid == ZERO:
+                raise ValueError("deletions are forbidden")
+            commit = subprocess.check_output(
+                ["git", "rev-parse", "--verify", f"{local_oid}^{{commit}}"],
+                text=True, stderr=subprocess.DEVNULL,
+            ).strip()
+            if commit != expected:
+                raise ValueError("ref does not point to the reviewed rehearsal commit")
+            if remote_oid != ZERO:
+                if remote_ref.startswith("refs/tags/"):
+                    raise ValueError("an existing release tag must never be replaced")
+                result = subprocess.run(
+                    ["git", "merge-base", "--is-ancestor", remote_oid, commit],
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                    check=False,
+                )
+                if result.returncode != 0:
+                    raise ValueError("only fast-forward branch updates are permitted")
+    except (OSError, ValueError, subprocess.SubprocessError) as error:
+        print(f"Fork rehearsal push blocked: {error}", file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

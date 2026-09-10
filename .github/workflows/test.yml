@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, rehearsal/v0.8.0]
   pull_request:
     branches: [main]
 
@@ -239,7 +239,7 @@ jobs:
           working-directory: controller
           args: >-
             --config=${{ github.workspace }}/.golangci.yml
-            --new-from-rev=${{ github.event.pull_request.base.sha || github.event.before }}
+            --new-from-rev=${{ github.event.pull_request.base.sha || (github.event.before != '0000000000000000000000000000000000000000' && github.event.before) || 'a4dc9432ae73e3ffc07f549f9c06693244884a07' }}
 
   provider-lint:
     runs-on: ubuntu-latest
@@ -269,7 +269,7 @@ jobs:
           working-directory: providers/${{ matrix.provider }}
           args: >-
             --config=${{ github.workspace }}/.golangci.yml
-            --new-from-rev=${{ github.event.pull_request.base.sha || github.event.before }}
+            --new-from-rev=${{ github.event.pull_request.base.sha || (github.event.before != '0000000000000000000000000000000000000000' && github.event.before) || 'a4dc9432ae73e3ffc07f549f9c06693244884a07' }}
 
   provider-shim-checks:
     runs-on: ubuntu-latest
@@ -293,7 +293,7 @@ jobs:
           working-directory: providers/pkg/shim
           args: >-
             --config=${{ github.workspace }}/.golangci.yml
-            --new-from-rev=${{ github.event.pull_request.base.sha || github.event.before }}
+            --new-from-rev=${{ github.event.pull_request.base.sha || (github.event.before != '0000000000000000000000000000000000000000' && github.event.before) || 'a4dc9432ae73e3ffc07f549f9c06693244884a07' }}
 
       - name: Test provider shim
         run: go test -C providers/pkg/shim ./...
@@ -359,6 +359,9 @@ jobs:
       - name: Lint GitHub workflow files
         run: |
           "$(go env GOPATH)/bin/actionlint" -color .github/workflows/*.yml
+
+      - name: Test fork publication safeguards
+        run: python3 -m unittest discover -s .github/rehearsal -v
 
       - name: Verify agent runtime publication contract
         shell: bash

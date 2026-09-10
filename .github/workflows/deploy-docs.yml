@@ -2,7 +2,7 @@ name: Deploy Docs Website
 
 on:
   push:
-    branches: [main]
+    branches: [main, rehearsal/v0.8.0]
     paths:
       - 'website/**'
       - 'docs/**'
