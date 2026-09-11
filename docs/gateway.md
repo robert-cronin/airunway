@@ -236,6 +236,12 @@ See the [upstream multi-model guide](https://gateway-api-inference-extension.sig
 > inert `airunway.ai/bbr-restarted` annotation, which nothing reads and which is
 > safe to leave in place.
 
+### Optional Semantic Router frontend
+
+For selecting a model from the contents of a prompt, see the [vLLM Semantic Router integration guide](integrations/semantic-router.md). It shows a separately managed Envoy frontend and routing processor connected directly to AI Runway model Services, including endpoint and served-name discovery.
+
+BBR routes using the model name chosen by the client. Semantic Router can classify a request and choose a model according to configured decisions. The guide's direct-Service example is independent of this Gateway API path; using Semantic Router with these HTTPRoutes, InferencePools, and endpoint pickers requires a separate integration contract. It is not a drop-in BBR replacement.
+
 ### Auto-detection with Multiple Gateways
 
 When no explicit gateway is configured and multiple Gateway resources exist in the cluster, the controller looks for one labeled with:

@@ -106,6 +106,12 @@ AI Runway optionally integrates with the [Gateway API Inference Extension](https
 
 The feature is auto-detected at startup and silently disabled if the required CRDs are not present. See [Gateway Integration](gateway.md) for full details.
 
+## Optional Semantic Router Integration
+
+[vLLM Semantic Router](integrations/semantic-router.md) can add request classification and model selection in front of AI Runway-managed OpenAI-compatible model Services. In the documented pattern, clients call a separately managed Envoy proxy, which consults the Semantic Router processor and forwards the request to the selected model Service.
+
+AI Runway manages the model lifecycle; the router's operator manages classification assets, endpoint mappings, routing decisions, and proxy access controls. This optional path has its own configuration and does not change AI Runway's provider selection or Gateway API routing. The guide distinguishes the domain-routing example from additional caching/guardrail capabilities and future gateway integration work.
+
 ## Documentation
 
 For detailed documentation on specific topics, see:
@@ -120,6 +126,7 @@ For detailed documentation on specific topics, see:
 | [Observability](observability.md) | Prometheus metrics and Kubernetes events |
 | [Versioning & Upgrades](versioning-upgrades.md) | API versioning strategy, controller upgrades, compatibility matrix |
 | [Gateway Integration](gateway.md) | Gateway API Inference Extension setup and usage |
+| [Semantic Router Integration](integrations/semantic-router.md) | Optional request classification and model selection through a separate frontend proxy |
 | [Design Decisions](design-decisions.md) | Alternatives considered, testing strategy, known limitations, out of scope |
 | [API Reference](api.md) | REST API endpoint documentation |
 | [Development Guide](development.md) | Setup, build, and testing instructions |
