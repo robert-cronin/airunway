@@ -45,6 +45,26 @@ function createModelDeployment(overrides: ModelDeploymentOverrides = {}): ModelD
 }
 
 describe('toDeploymentStatus', () => {
+  test.each(['huggingface', 'custom'] as const)('preserves the %s model source for display', source => {
+    const deployment = createModelDeployment({
+      spec: {
+        model: {
+          id: 'Qwen/Qwen3-0.6B',
+          source,
+        },
+      },
+    });
+
+    expect(toDeploymentStatus(deployment)).toMatchObject({
+      modelId: 'Qwen/Qwen3-0.6B',
+      modelSource: source,
+    });
+  });
+
+  test('uses the CRD Hugging Face default when the model source is omitted', () => {
+    expect(toDeploymentStatus(createModelDeployment()).modelSource).toBe('huggingface');
+  });
+
   test('uses the provider endpoint service and service port for frontend access', () => {
     const deployment = createModelDeployment({
       metadata: {

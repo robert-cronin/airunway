@@ -7,8 +7,8 @@ import { Button } from '@/components/ui/button'
 import { DeploymentStatusBadge } from '@/components/deployments/DeploymentStatusBadge'
 import { MetricsTab } from '@/components/metrics'
 import { formatRelativeTime } from '@/lib/utils'
-import { getEngineDisplayName, getProviderDisplayName } from '@/lib/deploymentDisplay'
-import { Loader2, ArrowLeft, Trash2, Copy, Terminal, Globe, HardDrive } from 'lucide-react'
+import { getEngineDisplayName, getHuggingFaceModelUrl, getProviderDisplayName } from '@/lib/deploymentDisplay'
+import { Loader2, ArrowLeft, Trash2, Copy, Terminal, Globe, HardDrive, ExternalLink } from 'lucide-react'
 import { useState } from 'react'
 import { buildPortForwardCommand } from '@airunway/shared'
 import {
@@ -102,6 +102,7 @@ export function DeploymentDetailsPage() {
   }
 
   const portForwardCommand = buildPortForwardCommand(deployment)
+  const modelUrl = getHuggingFaceModelUrl(deployment.modelId, deployment.modelSource)
 
   // Gateway endpoint (when available)
   const hasGateway = !!deployment.gateway?.endpoint
@@ -182,7 +183,19 @@ export function DeploymentDetailsPage() {
       {/* Model Info */}
       <div className="glass-panel animate-slide-up" style={{ animationDelay: '100ms', animationFillMode: 'both' }}>
         <h2 className="text-lg font-heading">Model</h2>
-        <p className="text-sm text-muted-foreground mt-1">{deployment.modelId}</p>
+        <p className="text-sm text-muted-foreground mt-1 break-all">{deployment.modelId}</p>
+        {modelUrl && (
+          <a
+            href={modelUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            aria-label="View model on Hugging Face (opens in a new tab)"
+            className="mt-2 inline-flex items-center gap-1.5 text-sm text-primary underline underline-offset-4 hover:text-primary/80"
+          >
+            View model on Hugging Face
+            <ExternalLink className="h-4 w-4 shrink-0" aria-hidden="true" />
+          </a>
+        )}
       </div>
 
       {/* Storage Volumes - shown when storage is configured */}

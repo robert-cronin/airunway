@@ -303,6 +303,7 @@ export interface DeploymentStatus {
   name: string;
   namespace: string;
   modelId: string;
+  modelSource?: ModelSource;
   servedModelName?: string;
   engine?: Engine;
   mode: ServingMode;
@@ -686,6 +687,7 @@ export function toDeploymentStatus(md: ModelDeployment, pods: PodStatus[] = []):
     name: md.metadata.name,
     namespace: md.metadata.namespace,
     modelId: spec.model.id,
+    modelSource: spec.model.source ?? 'huggingface',
     servedModelName: spec.model.servedName,
     engine: (spec.engine?.type as Engine) || (status.engine?.type as Engine) || undefined,
     mode: spec.serving?.mode || 'aggregated',

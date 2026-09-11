@@ -7,6 +7,8 @@ import type { DeploymentStatus } from '@/lib/api'
 
 const deploymentMock = vi.hoisted(() => ({
   current: undefined as DeploymentStatus | undefined,
+  isLoading: false,
+  error: null as Error | null,
 }))
 const deleteMutationMock = vi.hoisted(() => vi.fn())
 const chatMock = vi.hoisted(() => vi.fn())
@@ -15,8 +17,8 @@ const toastMock = vi.hoisted(() => vi.fn())
 vi.mock('@/hooks/useDeployments', () => ({
   useDeployment: () => ({
     data: deploymentMock.current,
-    isLoading: false,
-    error: null,
+    isLoading: deploymentMock.isLoading,
+    error: deploymentMock.error,
   }),
   useDeleteDeployment: () => ({
     mutateAsync: deleteMutationMock,
@@ -64,6 +66,7 @@ function createDeployment(overrides: Partial<DeploymentStatus> = {}): Deployment
     name: 'qwen3-0-6b-vllm-abc123',
     namespace: 'airunway-system',
     modelId: 'Qwen/Qwen3-0.6B',
+    modelSource: 'huggingface',
     engine: 'vllm',
     mode: 'aggregated',
     phase: 'Running',
@@ -82,6 +85,7 @@ function renderDetailsPage() {
     <MemoryRouter initialEntries={[`/deployments/${deploymentMock.current?.name ?? 'missing'}?namespace=airunway-system`]}>
       <Routes>
         <Route path="/deployments/:name" element={<DeploymentDetailsPage />} />
+        <Route path="/deployments" element={<h1>Deployment list</h1>} />
       </Routes>
     </MemoryRouter>
   )
@@ -105,14 +109,86 @@ function streamResponse(chunks: string[]): Response {
   )
 }
 
-describe('DeploymentDetailsPage chat panel', () => {
-  beforeEach(() => {
-    deploymentMock.current = createDeployment()
-    chatMock.mockReset()
-    deleteMutationMock.mockReset()
-    toastMock.mockReset()
+beforeEach(() => {
+  deploymentMock.current = createDeployment()
+  deploymentMock.isLoading = false
+  deploymentMock.error = null
+  chatMock.mockReset()
+  deleteMutationMock.mockReset()
+  toastMock.mockReset()
+})
+
+describe('DeploymentDetailsPage model details', () => {
+  it('provides a descriptive, keyboard-accessible link to the Hugging Face model card', async () => {
+    const user = userEvent.setup()
+    renderDetailsPage()
+
+    expect(screen.getByText('Qwen/Qwen3-0.6B')).toBeInTheDocument()
+    const link = screen.getByRole('link', {
+      name: 'View model on Hugging Face (opens in a new tab)',
+    })
+    expect(link).toHaveAttribute('href', 'https://huggingface.co/Qwen/Qwen3-0.6B')
+    expect(link).toHaveAttribute('target', '_blank')
+    expect(link).toHaveAttribute('rel', 'noopener noreferrer')
+
+    await user.tab() // Back to deployments
+    await user.tab() // Delete
+    await user.tab() // Model card
+    expect(link).toHaveFocus()
   })
 
+  it.each([
+    { modelId: 'Qwen/Qwen3-0.6B', modelSource: 'custom' as const },
+    { modelId: 'my-team/custom-model', modelSource: 'custom' as const },
+    { modelId: '/models/local-model', modelSource: 'custom' as const },
+    { modelId: 'ollama://qwen3:0.6b', modelSource: 'custom' as const },
+    { modelId: 'Qwen/Qwen3-0.6B', modelSource: undefined },
+  ])('keeps $modelId from source $modelSource visible without a guessed link', overrides => {
+    deploymentMock.current = createDeployment(overrides)
+    renderDetailsPage()
+
+    expect(screen.getByRole('heading', { name: 'Model' })).toBeInTheDocument()
+    expect(screen.getByText(overrides.modelId)).toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: /Hugging Face/ })).not.toBeInTheDocument()
+  })
+
+  it.each([
+    'https://example.com/model',
+    'org/model?revision=main',
+    'org/../model',
+  ])('keeps malformed Hugging Face identifier %s as plain text', modelId => {
+    deploymentMock.current = createDeployment({ modelId })
+    renderDetailsPage()
+
+    expect(screen.getByText(modelId)).toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: /Hugging Face/ })).not.toBeInTheDocument()
+  })
+
+  it('does not show stale model details while the deployment is loading', () => {
+    deploymentMock.isLoading = true
+    renderDetailsPage()
+
+    expect(screen.queryByRole('heading', { name: 'Model' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: /Hugging Face/ })).not.toBeInTheDocument()
+    expect(screen.queryByText('Deployment not found')).not.toBeInTheDocument()
+  })
+
+  it.each(['missing', 'failed'] as const)('preserves back navigation for %s deployment details', async state => {
+    if (state === 'missing') {
+      deploymentMock.current = undefined
+    } else {
+      deploymentMock.error = new Error('Unable to load deployment')
+    }
+    renderDetailsPage()
+
+    expect(screen.getByText('Deployment not found')).toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: /Hugging Face/ })).not.toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: 'Back to Deployments' }))
+    expect(screen.getByRole('heading', { name: 'Deployment list' })).toBeInTheDocument()
+  })
+})
+
+describe('DeploymentDetailsPage chat panel', () => {
   it('shows chat only for running deployments with a frontend service', () => {
     const running = renderDetailsPage()
     expect(screen.getByRole('heading', { name: 'Chat with model' })).toBeInTheDocument()

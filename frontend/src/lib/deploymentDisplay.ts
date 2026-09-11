@@ -1,3 +1,24 @@
+import type { ModelSource } from '@airunway/shared'
+
+export function getHuggingFaceModelUrl(modelId: string, source?: ModelSource): string | undefined {
+  // A custom model can also have an owner/name identifier, so require its source.
+  if (source !== 'huggingface') return undefined
+
+  const segments = modelId.split('/')
+  // Accept repository names (including legacy unnamespaced models), not URLs or paths.
+  if (
+    segments.length > 2 ||
+    segments.some(segment => segment.trim() !== segment || !/^\w(?:[\w.-]{0,94}\w)?$/.test(segment)) ||
+    modelId.includes('..') ||
+    modelId.includes('--') ||
+    modelId.endsWith('.git')
+  ) {
+    return undefined
+  }
+
+  return `https://huggingface.co/${segments.map(encodeURIComponent).join('/')}`
+}
+
 export function getProviderDisplayName(provider?: string): string {
   switch (provider) {
     case 'vllm':
